@@ -29,13 +29,19 @@ namespace xps_helper
             if (mapFile == null) return;
             var dataFiles = files.Where(x => Regex.IsMatch(Path.GetFileName(x), o.DataFileFilter));
             var mapping = ParseMapFile(mapFile);
+            using var cwb = new XLWorkbook();
             foreach (var item in dataFiles)
             {
                 var saveName = mapping[Path.GetFileName(item)];
                 var savePath = Path.Combine(Path.GetDirectoryName(item), saveName);
                 Console.WriteLine($"Converting '{item}' to '{savePath}'...");
-                MakeXlsxFromTxt(item, savePath);
+                var coreLevelName = saveName.Split('_')[0].Replace(" ", "");
+                var collectedSheet = cwb.AddWorksheet(coreLevelName);
+                MakeXlsxFromTxt(item, savePath, collectedSheet);
             }
+            var combinedXlsxFilePath = Path.Combine(folderPath, $"{Path.GetFileName(folderPath)}.xlsx");
+            Console.WriteLine($"Combined output will be located at '{combinedXlsxFilePath}'");
+            cwb.SaveAs(combinedXlsxFilePath);
         }
 
         public static Dictionary<string, string> ParseMapFile(string filePath)
@@ -71,7 +77,7 @@ namespace xps_helper
             return res;
         }
 
-        public static void MakeXlsxFromTxt(string inputPath, string outputPath)
+        public static void MakeXlsxFromTxt(string inputPath, string outputPath, IXLWorksheet collectedSheet)
         {
             //Read
             using var reader = new StreamReader(inputPath);
@@ -86,11 +92,43 @@ namespace xps_helper
             using var wb = new XLWorkbook();
             var sheet = wb.AddWorksheet();
             int rowIndex = 1;
+            int dataStartRowIndex = -1;
+            int beColumnIndex = -1;
+            int cpsColumnIndex = -1;
             while (tsvReader.Read())
             {
                 for (int i = 0; tsvReader.TryGetField(i, out string? value); i++)
                 {
-                    sheet.Cell(rowIndex, i + 1).Value = value;
+                    bool numeric = double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed);
+                    if (i == beColumnIndex)
+                    {
+                        collectedSheet.Cell(rowIndex - dataStartRowIndex + 1, 1).Value = parsed;
+                    }
+                    if (i == cpsColumnIndex)
+                    {
+                        collectedSheet.Cell(rowIndex - dataStartRowIndex + 1, 2).Value = parsed;
+                    }
+                    switch (value)
+                    {
+                        case "B.E.":
+                            beColumnIndex = i;
+                            dataStartRowIndex = rowIndex;
+                            collectedSheet.Cell(1, 1).Value = "Binding Energy";
+                            break;
+                        case "CPS":
+                            cpsColumnIndex = i;
+                            collectedSheet.Cell(1, 2).Value = "Raw Data";
+                            break;
+                        default: break;
+                    }
+                    if (numeric)
+                    {
+                        sheet.Cell(rowIndex, i + 1).Value = parsed;
+                    }
+                    else
+                    {
+                        sheet.Cell(rowIndex, i + 1).Value = value;
+                    }
                 }
                 rowIndex++;
             }
